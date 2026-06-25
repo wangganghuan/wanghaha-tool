@@ -1,0 +1,10 @@
+.git
+.gitignore
+.agents
+.vscode
+__pycache__
+*.py[cod]
+.env
+.preview_cache
+miniprogram
+*.md
