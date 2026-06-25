@@ -195,7 +195,7 @@ def find_browser_executable():
     ]
     return next((path for path in candidates if path and os.path.isfile(path)), "")
 
-def fetch_douyin_browser_detail(content_id, timeout_ms=25000):
+def fetch_douyin_browser_detail(content_id, timeout_ms=None):
     """
     Fetch the complete public work object after Douyin's browser verification.
 
@@ -203,6 +203,9 @@ def fetch_douyin_browser_detail(content_id, timeout_ms=25000):
     The verified PC page requests the public post list, which retains the
     real video.play_addr paired with every Live image.
     """
+    if timeout_ms is None:
+        timeout_ms = int(os.environ.get("DOUYIN_BROWSER_TIMEOUT_MS", "45000"))
+
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -677,6 +680,10 @@ def parse_xiaohongshu(url):
                 if note.get("type") == "video":
                     media_type = "video"
                     video_info = note.get("video", {})
+                    media_streams = video_info.get("media", {}).get("stream", {})
+                    h264_streams = media_streams.get("h264", [])
+                    h265_streams = media_streams.get("h265", [])
+                    h264_preview = first_url(h264_streams[0]) if h264_streams else ""
                     
                     # Try to parse mediaV2 for high resolution streams
                     media_v2_str = video_info.get("mediaV2", "")
@@ -699,18 +706,20 @@ def parse_xiaohongshu(url):
                         video_url = hd_screencast
                     else:
                         # Try H.265 stream if available, which is also watermark-free
-                        h265_streams = video_info.get("media", {}).get("stream", {}).get("h265", [])
                         if h265_streams and h265_streams[0].get("masterUrl"):
                             video_url = h265_streams[0].get("masterUrl")
                         else:
-                            h264_streams = video_info.get("media", {}).get("stream", {}).get("h264", [])
                             if h264_streams and h264_streams[0].get("masterUrl"):
                                 video_url = h264_streams[0].get("masterUrl")
                             
-                    # Keep preview/download/copy on the same original source.
-                    # XHS H.264 screencast streams can add a watermark after
-                    # several seconds even though originVideoKey is clean.
-                    preview_url = video_url
+                    # Preview with H.264 immediately; keep the original clean
+                    # source for downloading.
+                    preview_url = (
+                        hd_screencast
+                        or default_screencast
+                        or h264_preview
+                        or video_url
+                    )
                                 
                     cover = clean_xhs_image_url(video_info.get("cover", {}).get("url", ""))
                 else:
@@ -721,9 +730,9 @@ def parse_xiaohongshu(url):
                         img_url = img.get("urlDefault", img.get("url", ""))
                         images.append(clean_xhs_image_url(img_url, img_trace))
                         
-                        # Extract Live Photo stream if exists
-                        is_live = bool(img.get("livePhoto") or img.get("live_photo"))
-                        live_video_url = extract_motion_video(img) if is_live else ""
+                        # Some XHS page variants omit the livePhoto boolean while
+                        # still exposing a per-image motion stream.
+                        live_video_url = extract_motion_video(img)
                         live_photos.append(live_video_url)
                     if images:
                         cover = images[0]
@@ -821,7 +830,7 @@ def transcode_xhs_preview(source_url, output_path):
         "-headers", headers,
         "-i", source_url,
         "-map", "0:v:0",
-        "-map", "0:a?",
+        "-map", "0:a:0?",
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-crf", "22",
@@ -997,14 +1006,20 @@ def extract():
                 "error": f"解析失败: {parse_err}"
             }), 400
             
-        parsed_data["url"] = proxy_url(parsed_data.get("url"))
+        original_url = parsed_data.get("url")
+        original_preview_url = parsed_data.get("preview_url")
+        parsed_data["url"] = proxy_url(original_url)
         preview_endpoint = (
             "/api/xhs_video_preview"
-            if parsed_data.get("platform") == "小红书"
+            if (
+                parsed_data.get("platform") == "小红书"
+                and original_preview_url
+                and original_preview_url == original_url
+            )
             else "/api/video_proxy"
         )
         parsed_data["preview_url"] = proxy_url(
-            parsed_data.get("preview_url"),
+            original_preview_url,
             preview_endpoint,
         )
         parsed_data["images"] = proxy_url_list(parsed_data.get("images"))
