@@ -1,0 +1,6 @@
+Flask>=3.1,<4
+requests>=2.32,<3
+playwright>=1.60,<2
+imageio-ffmpeg>=0.6,<1
+gunicorn>=23,<24; platform_system != "Windows"
+waitress>=3,<4; platform_system == "Windows"
