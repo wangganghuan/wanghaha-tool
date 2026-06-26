@@ -1035,6 +1035,28 @@
             opacity: 0.8;
         }
 
+        .live-status-row {
+            display: none;
+            margin: -4px 0 14px;
+            padding: 9px 12px;
+            border-radius: 12px;
+            background: #eff6ff;
+            color: #2563eb;
+            font-size: 13px;
+            line-height: 1.45;
+        }
+
+        .live-status-row.error {
+            background: #fff7ed;
+            color: #ea580c;
+            cursor: pointer;
+        }
+
+        .live-status-row.success {
+            background: #ecfdf5;
+            color: #059669;
+        }
+
         /* iOS style checkmark overlays */
         .grid-image-item, .grid-live-item {
             position: relative;
@@ -1152,7 +1174,7 @@
                 <div class="promo-text">
                     <div class="promo-sub">支持图片/视频</div>
                     <div class="promo-main">去水印免费工具</div>
-                    <div class="promo-tag">支持抖音平台</div>
+                    <div class="promo-tag">目前支持抖音平台、小红书、快手</div>
                 </div>
                 
                 <!-- Cool pure SVG visual of stylized headphones matching the screenshot -->
@@ -1227,7 +1249,7 @@
         <div class="result-section" id="resultSection">
             <div class="result-card">
                 <div class="video-preview-wrapper" id="videoPreviewWrapper">
-                    <video id="resultVideo" controls preload="metadata" playsinline></video>
+                    <video id="resultVideo" controls controlsList="nodownload nofullscreen noremoteplayback" disablePictureInPicture preload="metadata" playsinline></video>
                 </div>
 
                 <div class="image-preview-wrapper" id="imagePreviewWrapper" style="display: none;">
@@ -1246,6 +1268,8 @@
                             <span class="selection-link selection-link-danger" onclick="selectAllMedia(false)">全不选</span>
                         </div>
                     </div>
+
+                    <div class="live-status-row" id="liveStatusRow"></div>
 
                     <!-- Cover Container -->
                     <div class="cover-preview-container" id="coverSection">
@@ -1422,7 +1446,68 @@
         let lastExtractedDesc = "";
         let extractedMediaType = "video";
         let extractedImages = [];
+        let extractedLivePhotos = [];
         let activeSegmentTab = "imageset";
+        let currentExtractionToken = 0;
+        let lastDouyinLiveText = "";
+
+        function getApiEndpoint() {
+            return window.location.protocol === 'file:' ? 'http://127.0.0.1:9880/api/extract' : '/api/extract';
+        }
+
+        function isDouyinInput(text) {
+            return /douyin\.com|iesdouyin\.com/i.test(text || '');
+        }
+
+        function resolveMediaUrl(url) {
+            if (!url) return '';
+            if (url.startsWith('/')) {
+                const origin = window.location.origin && window.location.origin !== 'null' ? window.location.origin : 'http://127.0.0.1:9880';
+                return origin + url;
+            }
+            return url;
+        }
+
+        async function requestExtraction(urlValue, includeLive) {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), includeLive ? 90000 : 30000);
+            try {
+                const response = await fetch(getApiEndpoint(), {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ url: urlValue, include_live: includeLive }),
+                    signal: controller.signal,
+                });
+                return await response.json();
+            } finally {
+                clearTimeout(timeout);
+            }
+        }
+
+        function setLiveStatus(message, type = 'info') {
+            const liveStatusRow = document.getElementById('liveStatusRow');
+            if (!liveStatusRow) return;
+            liveStatusRow.classList.remove('error', 'success');
+            if (!message) {
+                liveStatusRow.style.display = 'none';
+                liveStatusRow.innerText = '';
+                liveStatusRow.onclick = null;
+                return;
+            }
+            liveStatusRow.style.display = 'block';
+            liveStatusRow.innerText = message;
+            if (type === 'error') {
+                liveStatusRow.classList.add('error');
+                liveStatusRow.onclick = () => {
+                    if (lastDouyinLiveText) loadDouyinLiveInBackground(lastDouyinLiveText, currentExtractionToken, true);
+                };
+            } else {
+                liveStatusRow.onclick = null;
+                if (type === 'success') liveStatusRow.classList.add('success');
+            }
+        }
 
         // Switch bottom tabs
         function switchTab(tab) {
@@ -1560,7 +1645,7 @@
         }
 
         // Post URL backend extraction
-        function processExtraction() {
+        async function processExtraction() {
             const urlInput = document.getElementById('urlInput');
             const urlValue = urlInput.value.trim();
 
@@ -1574,31 +1659,55 @@
             
             loader.style.display = 'flex';
             resultSection.style.display = 'none';
+            setLiveStatus('');
+            currentExtractionToken += 1;
+            const token = currentExtractionToken;
+            const douyin = isDouyinInput(urlValue);
 
-            const apiEndpoint = window.location.protocol === 'file:' ? 'http://127.0.0.1:9880/api/extract' : '/api/extract';
-            fetch(apiEndpoint, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                },
-                body: JSON.stringify({ url: urlValue }),
-            })
-            .then(res => res.json())
-            .then(resData => {
+            try {
+                const resData = await requestExtraction(urlValue, !douyin);
                 loader.style.display = 'none';
+                if (token !== currentExtractionToken) return;
                 if (resData.success && resData.data) {
                     const media = resData.data;
                     displayResult(media);
                     showToast('解析成功！已提取无水印资源。', 'success');
+                    if (douyin && media.media_type === 'images') {
+                        lastDouyinLiveText = urlValue;
+                        loadDouyinLiveInBackground(urlValue, token, false);
+                    }
                 } else {
                     showToast(resData.error || '解析失败，请检查链接格式', 'error');
                 }
-            })
-            .catch(err => {
+            } catch (err) {
                 loader.style.display = 'none';
                 console.error("Fetch extraction failed:", err);
-                showToast('网络连接失败，请稍后重试', 'error');
-            });
+                showToast(err.name === 'AbortError' ? '解析超时，请稍后重试' : '网络连接失败，请稍后重试', 'error');
+            }
+        }
+
+        async function loadDouyinLiveInBackground(urlValue, token, manualRetry = false) {
+            setLiveStatus(manualRetry ? '正在重新识别抖音 Live 实况…' : '图片已显示，正在后台识别抖音 Live 实况…');
+            try {
+                const resData = await requestExtraction(urlValue, true);
+                if (token !== currentExtractionToken) return;
+                if (!resData.success || !resData.data) {
+                    throw new Error(resData.error || 'Live 实况识别失败');
+                }
+                const livePhotos = (resData.data.live_photos || []).filter(Boolean);
+                if (livePhotos.length) {
+                    renderLivePhotos(livePhotos, true);
+                    setLiveStatus(`已识别到 ${livePhotos.length} 个 Live 实况，可切换到 Live 实况标签下载。`, 'success');
+                    showToast(`识别到 ${livePhotos.length} 个 Live 实况`, 'success');
+                } else {
+                    renderLivePhotos([], false);
+                    setLiveStatus('未识别到 Live 实况，此作品可能只是普通图集。');
+                }
+            } catch (err) {
+                console.warn('Douyin Live detection failed:', err);
+                if (token !== currentExtractionToken) return;
+                setLiveStatus('Live 实况识别超时或失败，点击这里重试。', 'error');
+            }
         }
 
         // Render result card details
@@ -1624,7 +1733,7 @@
 
             extractedMediaType = media.media_type || 'video';
             extractedImages = media.images || [];
-            const extractedLivePhotos = media.live_photos || [];
+            extractedLivePhotos = media.live_photos || [];
             lastExtractedDesc = media.desc || media.title || "";
 
             if (copyDescBtn) {
@@ -1649,11 +1758,7 @@
                 
                 // Render Cover (using first image) with custom iOS checkmark
                 if (extractedImages.length > 0) {
-                    let resolvedCoverUrl = extractedImages[0];
-                    if (resolvedCoverUrl.startsWith('/')) {
-                        const origin = window.location.origin && window.location.origin !== 'null' ? window.location.origin : 'http://127.0.0.1:9880';
-                        resolvedCoverUrl = origin + resolvedCoverUrl;
-                    }
+                    let resolvedCoverUrl = resolveMediaUrl(extractedImages[0]);
                     coverContainer.innerHTML = `
                         <img src="${resolvedCoverUrl}" alt="封面" onclick="toggleCheckbox('cover-check')">
                         <input type="checkbox" id="cover-check" class="media-select-checkbox ios-checkbox-input" data-url="${resolvedCoverUrl}" data-filename="cover.jpg" checked onchange="updateDownloadButtonState();">
@@ -1663,11 +1768,7 @@
 
                 // Render Image Set (all images) with custom iOS checkmark
                 extractedImages.forEach((imgUrl, index) => {
-                    let resolvedImgUrl = imgUrl;
-                    if (resolvedImgUrl.startsWith('/')) {
-                        const origin = window.location.origin && window.location.origin !== 'null' ? window.location.origin : 'http://127.0.0.1:9880';
-                        resolvedImgUrl = origin + resolvedImgUrl;
-                    }
+                    let resolvedImgUrl = resolveMediaUrl(imgUrl);
                     extractedImages[index] = resolvedImgUrl;
 
                     const imgItem = document.createElement('div');
@@ -1680,36 +1781,7 @@
                     imageGrid.appendChild(imgItem);
                 });
 
-                // Render Live Photos section with custom iOS checkmark
-                let hasLivePhotos = false;
-                extractedLivePhotos.forEach((lpUrl, index) => {
-                    if (lpUrl) {
-                        hasLivePhotos = true;
-                        let resolvedLpUrl = lpUrl;
-                        if (resolvedLpUrl.startsWith('/')) {
-                            const origin = window.location.origin && window.location.origin !== 'null' ? window.location.origin : 'http://127.0.0.1:9880';
-                            resolvedLpUrl = origin + resolvedLpUrl;
-                        }
-                        
-                        const liveItem = document.createElement('div');
-                        liveItem.className = 'grid-live-item';
-                        liveItem.innerHTML = `
-                            <video src="${resolvedLpUrl}" poster="${extractedImages[index] || ''}"
-                                muted loop playsinline controls preload="metadata"
-                                onclick="event.stopPropagation();"></video>
-                            <input type="checkbox" id="live-check-${index}" class="media-select-checkbox ios-checkbox-input" data-url="${resolvedLpUrl}" data-filename="live_${index + 1}.mp4" checked onchange="updateDownloadButtonState();">
-                            <label class="ios-checkbox-label" for="live-check-${index}"></label>
-                        `;
-                        liveGrid.appendChild(liveItem);
-                    }
-                });
-
-                // Set tab states
-                if (hasLivePhotos) {
-                    segTabLive.style.display = 'block';
-                } else {
-                    segTabLive.style.display = 'none';
-                }
+                renderLivePhotos(extractedLivePhotos, false);
                 switchSegment('imageset'); // Default to imageset tab as per mockup
 
                 updateDownloadButtonState();
@@ -1740,26 +1812,14 @@
                     `;
                 }
 
-                let mediaUrl = media.url;
-                if (mediaUrl.startsWith('/')) {
-                    const origin = window.location.origin && window.location.origin !== 'null' ? window.location.origin : 'http://127.0.0.1:9880';
-                    mediaUrl = origin + mediaUrl;
-                }
-                lastExtractedUrl = mediaUrl;
-                
                 // XHS preview_url is a local H.264 conversion of the same
-                // original clean video. Download/copy still use media.url.
-                let previewUrl = media.preview_url || media.url;
-                if (previewUrl.startsWith('/')) {
-                    const origin = window.location.origin && window.location.origin !== 'null' ? window.location.origin : 'http://127.0.0.1:9880';
-                    previewUrl = origin + previewUrl;
-                }
+                // original clean video. Use it for preview and download so
+                // the saved file remains playable in browsers/mobile albums.
+                let mediaUrl = resolveMediaUrl(media.url);
+                let previewUrl = resolveMediaUrl(media.preview_url || media.url);
+                lastExtractedUrl = media.platform === '小红书' ? previewUrl : mediaUrl;
                 
-                let coverUrl = media.cover || '';
-                if (coverUrl.startsWith('/')) {
-                    const origin = window.location.origin && window.location.origin !== 'null' ? window.location.origin : 'http://127.0.0.1:9880';
-                    coverUrl = origin + coverUrl;
-                }
+                let coverUrl = resolveMediaUrl(media.cover || '');
                 
                 resultVideo.src = media.platform === '小红书' ? previewUrl : mediaUrl;
                 
@@ -1772,6 +1832,40 @@
             setTimeout(() => {
                 resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
             }, 100);
+        }
+
+        function renderLivePhotos(livePhotos, autoSwitch = false) {
+            const liveGrid = document.getElementById('liveGrid');
+            const segTabLive = document.getElementById('segTabLive');
+            if (!liveGrid || !segTabLive) return;
+
+            liveGrid.innerHTML = '';
+            extractedLivePhotos = livePhotos || [];
+            let liveCount = 0;
+
+            extractedLivePhotos.forEach((lpUrl, index) => {
+                if (!lpUrl) return;
+                const resolvedLpUrl = resolveMediaUrl(lpUrl);
+                const liveItem = document.createElement('div');
+                liveItem.className = 'grid-live-item';
+                liveItem.innerHTML = `
+                    <video src="${resolvedLpUrl}" poster="${extractedImages[index] || ''}"
+                        muted loop playsinline controls preload="metadata"
+                        onclick="event.stopPropagation();"></video>
+                    <input type="checkbox" id="live-check-${index}" class="media-select-checkbox ios-checkbox-input" data-url="${resolvedLpUrl}" data-filename="live_${index + 1}.mp4" checked onchange="updateDownloadButtonState();">
+                    <label class="ios-checkbox-label" for="live-check-${index}"></label>
+                `;
+                liveGrid.appendChild(liveItem);
+                liveCount += 1;
+            });
+
+            segTabLive.innerText = liveCount ? `Live 实况 ${liveCount}` : 'Live 实况';
+            segTabLive.style.display = liveCount ? 'block' : 'none';
+            if (liveCount && autoSwitch) {
+                switchSegment('live');
+            } else {
+                updateDownloadButtonState();
+            }
         }
 
         // Batch download checked media assets
@@ -1816,8 +1910,8 @@
                 
                 showToast('正在为您打开无水印视频下载窗口...', 'success');
                 let downloadUrl = lastExtractedUrl;
-                if (downloadUrl.includes('/api/video_proxy')) {
-                    downloadUrl += '&download=1';
+                if (downloadUrl.includes('/api/video_proxy') || downloadUrl.includes('/api/xhs_video_preview')) {
+                    downloadUrl += `${downloadUrl.includes('?') ? '&' : '?'}download=1`;
                 }
                 window.open(downloadUrl, '_blank');
             }

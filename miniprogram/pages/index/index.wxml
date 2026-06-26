@@ -1,0 +1,96 @@
+<view class="page">
+  <view class="hero">
+    <view class="hero-title">图片视频提取</view>
+    <view class="hero-subtitle">支持抖音、快手、小红书公开分享链接</view>
+  </view>
+
+  <view class="card input-card">
+    <textarea
+      class="share-input"
+      placeholder="粘贴完整分享文案或链接"
+      value="{{inputText}}"
+      bindinput="onInput"
+      maxlength="-1"
+    />
+    <view class="input-actions">
+      <button class="minor-button" bindtap="paste">粘贴链接</button>
+      <button class="primary-button" loading="{{loading}}" bindtap="extract">
+        {{loading ? "解析中..." : "开始解析"}}
+      </button>
+    </view>
+  </view>
+
+  <view wx:if="{{media}}" class="card result-card">
+    <view class="platform">{{media.platform}}</view>
+    <view class="title">{{media.title || "无标题内容"}}</view>
+    <view class="author">作者：{{media.author || "未知作者"}}</view>
+
+    <view wx:if="{{liveStatus === 'loading'}}" class="live-status">
+      图片已解析，正在后台识别 Live 实况…
+    </view>
+    <view
+      wx:if="{{liveStatus === 'error'}}"
+      class="live-status live-retry"
+      bindtap="retryDouyinLive"
+    >
+      Live 实况识别超时，点击重试
+    </view>
+
+    <video
+      wx:if="{{media.media_type === 'video'}}"
+      class="video"
+      src="{{media.preview_url || media.url}}"
+      poster="{{media.cover}}"
+      controls
+      show-center-play-btn
+      enable-progress-gesture
+      binderror="onVideoError"
+    />
+
+    <block wx:else>
+      <view wx:if="{{liveItems.length}}" class="media-tabs">
+        <view
+          class="media-tab {{activeMediaTab === 'images' ? 'active' : ''}}"
+          data-tab="images"
+          bindtap="switchMediaTab"
+        >图片 {{imageItems.length}}</view>
+        <view
+          class="media-tab {{activeMediaTab === 'live' ? 'active' : ''}}"
+          data-tab="live"
+          bindtap="switchMediaTab"
+        >Live 实况 {{liveItems.length}}</view>
+      </view>
+
+      <view class="grid">
+        <view
+          wx:for="{{items}}"
+          wx:key="url"
+          class="image-item {{item.selected ? 'selected' : ''}}"
+          data-index="{{index}}"
+          bindtap="toggleItem"
+        >
+          <image class="image" src="{{item.poster || item.url}}" mode="aspectFill" lazy-load />
+          <view wx:if="{{activeMediaTab === 'live'}}" class="live-badge">LIVE</view>
+          <view class="check">{{item.selected ? "✓" : ""}}</view>
+        </view>
+      </view>
+
+      <view class="selection-row">
+        <text>已选择 {{selectedCount}} 项</text>
+        <view>
+          <text class="link" bindtap="selectAll">全选</text>
+          <text class="link danger" bindtap="clearSelection">全不选</text>
+        </view>
+      </view>
+    </block>
+
+    <button class="primary-button full" bindtap="saveMedia">
+      {{media.media_type === 'images' && activeMediaTab === 'live' ? "保存 Live 视频" : "保存到相册"}}
+    </button>
+    <button class="minor-button full" bindtap="copyLink">复制资源链接</button>
+  </view>
+
+  <view class="notice">
+    仅处理你有权保存的公开内容，请遵守平台规则及著作权要求。
+  </view>
+</view>

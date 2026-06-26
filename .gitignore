@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.env
+.preview_cache/
+scratch/
+dist/
+.vscode/
+miniprogram/project.private.config.json

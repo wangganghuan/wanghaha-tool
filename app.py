@@ -755,14 +755,12 @@ def parse_xiaohongshu(url):
                             if h264_streams and h264_streams[0].get("masterUrl"):
                                 video_url = h264_streams[0].get("masterUrl")
                             
-                    # Preview with H.264 immediately; keep the original clean
-                    # source for downloading.
-                    preview_url = (
-                        hd_screencast
-                        or default_screencast
-                        or h264_preview
-                        or video_url
-                    )
+                    # Use the same clean source for preview and download.
+                    # If the clean source is HEVC/H.265, /api/xhs_video_preview
+                    # will transcode it to browser-friendly H.264 on demand.
+                    # The screencast streams are fast to play, but XHS may add
+                    # an overlay watermark to them.
+                    preview_url = video_url or h264_preview or hd_screencast or default_screencast
                                 
                     cover = clean_xhs_image_url(video_info.get("cover", {}).get("url", ""))
                 else:
@@ -910,7 +908,7 @@ def xhs_video_preview():
         return "Invalid Xiaohongshu video URL", 400
 
     os.makedirs(PREVIEW_CACHE_DIR, exist_ok=True)
-    cache_key = hashlib.sha256(source_url.encode("utf-8")).hexdigest()
+    cache_key = hashlib.sha256(f"xhs-clean-preview-v2:{source_url}".encode("utf-8")).hexdigest()
     output_path = os.path.join(PREVIEW_CACHE_DIR, f"{cache_key}.mp4")
 
     lock = get_preview_lock(cache_key)
@@ -922,7 +920,12 @@ def xhs_video_preview():
             output_path,
             mimetype="video/mp4",
             conditional=True,
-            download_name="preview.mp4",
+            as_attachment=request.args.get("download") == "1",
+            download_name=re.sub(
+                r'[^a-zA-Z0-9._-]+',
+                '_',
+                request.args.get("filename", "xiaohongshu_video.mp4"),
+            ).strip("._") or "xiaohongshu_video.mp4",
         )
     except Exception as exc:
         logging.exception("XHS preview generation failed")
