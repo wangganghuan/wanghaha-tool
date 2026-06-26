@@ -19,6 +19,7 @@ WORKDIR /app
 # so Chinese pages render correctly during browser verification.
 RUN apt-get update && apt-get install -y --no-install-recommends \
         chromium \
+        ffmpeg \
         ca-certificates \
         fonts-noto-cjk \
         tzdata \

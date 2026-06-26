@@ -862,11 +862,13 @@ def get_preview_lock(cache_key):
 
 def transcode_xhs_preview(source_url, output_path):
     """Convert an original XHS HEVC video to browser-compatible H.264."""
-    try:
-        import imageio_ffmpeg
-        ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
-    except Exception as exc:
-        raise RuntimeError(f"未找到可用的视频转码组件: {exc}") from exc
+    ffmpeg_exe = os.environ.get("FFMPEG_BINARY", "").strip() or "/usr/bin/ffmpeg"
+    if not os.path.exists(ffmpeg_exe):
+        try:
+            import imageio_ffmpeg
+            ffmpeg_exe = imageio_ffmpeg.get_ffmpeg_exe()
+        except Exception as exc:
+            raise RuntimeError(f"未找到可用的视频转码组件: {exc}") from exc
 
     temp_path = output_path + ".tmp.mp4"
     headers = (
