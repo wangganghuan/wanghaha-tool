@@ -18,6 +18,10 @@ app = Flask(__name__, template_folder='templates')
 PREVIEW_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".preview_cache")
 PREVIEW_LOCKS = {}
 PREVIEW_LOCKS_GUARD = threading.Lock()
+DOUYIN_DETAIL_CACHE = {}
+DOUYIN_DETAIL_LOCKS = {}
+DOUYIN_DETAIL_GUARD = threading.Lock()
+DOUYIN_DETAIL_CACHE_SECONDS = 1800
 APP_HOST = os.environ.get("APP_HOST", "0.0.0.0")
 APP_PORT = int(os.environ.get("APP_PORT", "9880"))
 APP_DEBUG = os.environ.get("APP_DEBUG", "").lower() in ("1", "true", "yes")
@@ -125,7 +129,7 @@ def proxy_url_list(urls):
     """Wrap a media URL list while preserving empty Live Photo slots."""
     return [proxy_url(url) if url else "" for url in (urls or [])]
 
-def parse_supported_url(url):
+def parse_supported_url(url, include_live=True):
     """Dispatch a supported share URL to its platform parser."""
     hostname = (urllib.parse.urlparse(url).hostname or "").lower()
     parsers = (
@@ -135,6 +139,8 @@ def parse_supported_url(url):
     )
     for domains, parser in parsers:
         if any(hostname == domain or hostname.endswith("." + domain) for domain in domains):
+            if parser is parse_douyin:
+                return parser(url, include_live=include_live)
             return parser(url)
     raise ValueError("不支持该平台链接，目前仅支持抖音、快手、小红书。")
 
@@ -206,6 +212,29 @@ def fetch_douyin_browser_detail(content_id, timeout_ms=None):
     if timeout_ms is None:
         timeout_ms = int(os.environ.get("DOUYIN_BROWSER_TIMEOUT_MS", "45000"))
 
+    now = time.monotonic()
+    cached = DOUYIN_DETAIL_CACHE.get(str(content_id))
+    if cached and now - cached["created_at"] < DOUYIN_DETAIL_CACHE_SECONDS:
+        return cached["detail"]
+
+    with DOUYIN_DETAIL_GUARD:
+        detail_lock = DOUYIN_DETAIL_LOCKS.setdefault(str(content_id), threading.Lock())
+
+    with detail_lock:
+        cached = DOUYIN_DETAIL_CACHE.get(str(content_id))
+        if cached and time.monotonic() - cached["created_at"] < DOUYIN_DETAIL_CACHE_SECONDS:
+            return cached["detail"]
+
+        detail = _fetch_douyin_browser_detail(content_id, timeout_ms)
+        if detail:
+            DOUYIN_DETAIL_CACHE[str(content_id)] = {
+                "created_at": time.monotonic(),
+                "detail": detail,
+            }
+        return detail
+
+def _fetch_douyin_browser_detail(content_id, timeout_ms):
+    """Run one browser lookup; callers provide caching and de-duplication."""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError:
@@ -246,6 +275,16 @@ def fetch_douyin_browser_detail(content_id, timeout_ms=None):
             )
             page = context.new_page()
 
+            def skip_heavy_assets(route):
+                if route.request.resource_type in (
+                    "image", "media", "font", "stylesheet"
+                ):
+                    route.abort()
+                else:
+                    route.continue_()
+
+            page.route("**/*", skip_heavy_assets)
+
             def capture_public_post_list(response):
                 if "/aweme/v1/web/aweme/post/" not in response.url:
                     return
@@ -273,7 +312,7 @@ def fetch_douyin_browser_detail(content_id, timeout_ms=None):
 
     return matched_detail or None
 
-def parse_douyin(url):
+def parse_douyin(url, include_live=True):
     """Parse Douyin video URL to extract unwatermarked video."""
     session = requests.Session()
     headers = {
@@ -340,7 +379,11 @@ def parse_douyin(url):
     # The share page strips the video paired with each Live image. Ask the
     # verified public PC page for the complete work object when that happens.
     share_images = detail.get("images") or detail.get("image_list") or []
-    if share_images and not any(extract_motion_video(item) for item in share_images):
+    if (
+        include_live
+        and share_images
+        and not any(extract_motion_video(item) for item in share_images)
+    ):
         browser_detail = fetch_douyin_browser_detail(video_id)
         if browser_detail:
             detail = browser_detail
@@ -998,7 +1041,8 @@ def extract():
             }), 400
             
         try:
-            parsed_data = parse_supported_url(url)
+            include_live = data.get("include_live", True) is not False
+            parsed_data = parse_supported_url(url, include_live=include_live)
         except Exception as parse_err:
             logging.error(f"Parsing failed for {url}: {parse_err}")
             return jsonify({
