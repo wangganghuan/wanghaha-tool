@@ -42,6 +42,9 @@
       src="{{media.preview_url || media.url}}"
       poster="{{media.cover}}"
       controls
+      show-fullscreen-btn="{{false}}"
+      show-mute-btn="{{false}}"
+      show-casting-button="{{false}}"
       show-center-play-btn
       enable-progress-gesture
       binderror="onVideoError"

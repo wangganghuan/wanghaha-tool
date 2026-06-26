@@ -1850,7 +1850,7 @@
                 liveItem.className = 'grid-live-item';
                 liveItem.innerHTML = `
                     <video src="${resolvedLpUrl}" poster="${extractedImages[index] || ''}"
-                        muted loop playsinline controls preload="metadata"
+                        muted loop playsinline controls controlsList="nodownload nofullscreen noremoteplayback" disablePictureInPicture preload="metadata"
                         onclick="event.stopPropagation();"></video>
                     <input type="checkbox" id="live-check-${index}" class="media-select-checkbox ios-checkbox-input" data-url="${resolvedLpUrl}" data-filename="live_${index + 1}.mp4" checked onchange="updateDownloadButtonState();">
                     <label class="ios-checkbox-label" for="live-check-${index}"></label>

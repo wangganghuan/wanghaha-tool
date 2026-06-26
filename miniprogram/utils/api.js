@@ -73,6 +73,15 @@ async function extractMedia(text) {
     return requestByHttp(text, false)
   }
 
+  // Use the public HTTPS endpoint first so returned media proxy URLs are
+  // generated against the same public domain that <video> and wx.downloadFile
+  // can access. callContainer is still kept as a fallback for API failures.
+  try {
+    return await requestByHttp(text)
+  } catch (httpFirstError) {
+    console.warn("公网接口解析失败，准备尝试云托管调用", httpFirstError)
+  }
+
   if (!(wx.cloud && CLOUD_ENV && CLOUD_SERVICE)) {
     return requestByHttp(text)
   }

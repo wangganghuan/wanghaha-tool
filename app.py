@@ -119,11 +119,19 @@ def get_media_response(url, headers, max_redirects=5):
         current_url = urllib.parse.urljoin(current_url, location)
     raise ValueError("Too many media redirects")
 
+def get_public_base_url():
+    """Return the public origin used by the current request."""
+    proto = request.headers.get("X-Forwarded-Proto", request.scheme or "https")
+    host = request.headers.get("X-Forwarded-Host", request.host)
+    if host:
+        return f"{proto}://{host}".rstrip("/")
+    return request.host_url.rstrip("/")
+
 def proxy_url(url, endpoint="/api/video_proxy"):
     """Wrap one remote media URL with a local endpoint."""
     if not url or not url.startswith(("http://", "https://")):
         return url or ""
-    return f"{endpoint}?url={urllib.parse.quote(url)}"
+    return f"{get_public_base_url()}{endpoint}?url={urllib.parse.quote(url)}"
 
 def proxy_url_list(urls):
     """Wrap a media URL list while preserving empty Live Photo slots."""
@@ -981,6 +989,8 @@ def video_proxy():
             val = resp.headers.get(h)
             if val:
                 proxy_headers[h] = val
+        if not proxy_headers.get("Content-Type") or proxy_headers["Content-Type"].lower().startswith(("application/octet-stream", "binary/octet-stream")):
+            proxy_headers["Content-Type"] = "video/mp4"
         proxy_headers['Accept-Ranges'] = 'bytes'
         
         # Enable CORS for direct web player access
